@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
 
     // Create the executable artifact.
     const exe = b.addExecutable(.{
-        .name = "load_balancer_zig", // Renamed executable
+        .name = "zig_http_server", // Updated executable name
         .root_source_file = b.path("src/main.zig"), // Path to your main source file
         .target = target,
         .optimize = optimize,
@@ -37,8 +37,8 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // Creates a step for running the tests.
-    // Note: Tests defined in load_balancer.zig will also be included
-    // if they are reachable from the root test file.
+    // All .zig files imported by src/main.zig (including those in src/server/ and src/utils/)
+    // that contain tests will be included.
     const unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,

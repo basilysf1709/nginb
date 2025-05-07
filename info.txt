@@ -1,0 +1,125 @@
+Project Structure and Information
+===============================
+
+Project Overview:
+---------------
+A high-performance HTTP server written in Zig, designed to handle static file serving and basic routing with a focus on memory safety and performance.
+
+Directory Structure:
+------------------
+src/
+├── server/
+│   ├── config.zig      - Server configuration handling
+│   ├── master.zig      - Master thread implementation
+│   ├── worker.zig      - Worker thread implementation
+├── utils/
+│   ├── logger.zig      - Logging utilities
+│   ├── path_utils.zig  - Path utilities
+│   └── mime.zig        - MIME type detection
+├── http/
+│   ├── request.zig      - HTTP request handling
+│   ├── response.zig     - HTTP response handling
+│   └── router.zig       - HTTP request routing
+├── load_balancer.zig   - Load balancer implementation
+└── main.zig            - Application entry point
+
+File Functionality:
+-----------------
+
+src/server/config.zig:
+- Handles server configuration loading from JSON files
+- Contains Config struct with server settings:
+  - worker_count: Number of worker threads
+  - listen_address: Server bind address
+  - listen_port: Server port number
+  - root_path: Root directory for static files
+
+src/server/master.zig:
+- Implements the main server loop (master process/thread)
+- Initializes and manages worker processes/threads
+- Handles listening socket and distributes connections to workers
+- Manages server lifecycle (start, stop, reload configuration)
+
+src/server/worker.zig:
+- Implements worker process/thread logic
+- Handles accepted connections from the master
+- Parses HTTP requests (potentially using src/http/request.zig)
+- Routes requests (potentially using src/http/router.zig)
+- Generates and sends HTTP responses (potentially using src/http/response.zig)
+- Manages connection lifecycle and cleanup for individual connections
+
+src/utils/logger.zig:
+- Logging system with different severity levels
+- Thread-safe logging implementation (if applicable for multi-threading)
+- Console and file output support (configurable)
+
+src/utils/path_utils.zig:
+- Provides utility functions for file system path manipulation
+- Normalization, joining, and validation of paths
+- Security checks for path traversal
+
+src/utils/mime.zig:
+- MIME type detection based on file extensions
+- Default MIME type handling
+- Custom MIME type mapping support (e.g., from a config file)
+
+src/http/request.zig:
+- Parsing and representation of incoming HTTP requests
+- Handles methods, headers, URI, query parameters, and body
+- Provides an easy-to-use API for accessing request data
+
+src/http/response.zig:
+- Construction and sending of HTTP responses
+- Setting status codes, headers, and body content
+- Support for different content types and chunked encoding (optional)
+
+src/http/router.zig:
+- HTTP request routing implementation
+- Maps request URIs and methods to handler functions
+- Static file serving logic (determining file paths, checking existence)
+- Basic route handling with support for:
+  - GET requests (and other methods as needed)
+  - Static file serving from the configured root_path
+  - Directory listing (optional)
+
+src/load_balancer.zig:
+- (If still active or for a different mode of operation)
+- Implements TCP load balancing logic
+- Distributes incoming connections to a set of backend servers
+- Hashing or other algorithms for backend selection
+
+src/main.zig:
+- Application entry point
+- Initializes global resources (e.g., allocator)
+- Loads server configuration (using src/server/config.zig)
+- Initializes and starts the master server process (src/server/master.zig)
+- Handles process-wide signals (e.g., SIGINT, SIGTERM) for graceful shutdown
+
+Configuration:
+------------
+Server configuration is stored in JSON format with the following structure:
+{
+    "worker_count": 4,
+    "listen_address": "127.0.0.1",
+    "listen_port": 8080,
+    "root_path": "/var/www"
+}
+
+Build System:
+-----------
+- Uses Zig's built-in build system
+- No external dependencies required
+- Debug and release build configurations
+- Cross-compilation support
+
+Development Status:
+-----------------
+- Basic HTTP server functionality implemented
+- Static file serving working
+- Configuration system in place
+- Worker thread pool operational
+- Logging system functional
+- MIME type detection implemented
+- TODO: Add support for virtual hosts
+- TODO: Implement caching system
+- TODO: Add SSL/TLS support
