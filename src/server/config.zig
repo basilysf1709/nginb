@@ -51,21 +51,33 @@ pub const Config = struct {
             const trimmed_line = mem.trim(u8, line, " \t,");
             if (mem.startsWith(u8, trimmed_line, "\"worker_count\"")) {
                 // Extremely naive parsing
-                const value_part = mem.splitScalar(u8, trimmed_line, ':').rest;
-                const num_str = mem.trim(u8, value_part, " ");
-                worker_count = std.fmt.parseInt(u32, num_str, 10) catch 4;
+                var parts = mem.splitScalar(u8, trimmed_line, ':');
+                _ = parts.next(); // Skip the key part ("worker_count")
+                if (parts.next()) |value_part| { // Get the value part
+                    const num_str = mem.trim(u8, value_part, " ");
+                    worker_count = std.fmt.parseInt(u32, num_str, 10) catch 4;
+                }
             } else if (mem.startsWith(u8, trimmed_line, "\"listen_address\"")) {
-                const value_part = mem.splitScalar(u8, trimmed_line, ':').rest;
-                const str_val = mem.trim(u8, value_part, " \"");
-                listen_address_str = str_val; // This slice points into dummy_file_content
+                var parts = mem.splitScalar(u8, trimmed_line, ':');
+                _ = parts.next(); // Skip the key part
+                if (parts.next()) |value_part| {
+                    const str_val = mem.trim(u8, value_part, " \"");
+                    listen_address_str = str_val; // This slice points into dummy_file_content
+                }
             } else if (mem.startsWith(u8, trimmed_line, "\"listen_port\"")) {
-                const value_part = mem.splitScalar(u8, trimmed_line, ':').rest;
-                const num_str = mem.trim(u8, value_part, " ");
-                listen_port = std.fmt.parseInt(u16, num_str, 10) catch 8080;
+                var parts = mem.splitScalar(u8, trimmed_line, ':');
+                _ = parts.next(); // Skip the key part
+                if (parts.next()) |value_part| {
+                    const num_str = mem.trim(u8, value_part, " ");
+                    listen_port = std.fmt.parseInt(u16, num_str, 10) catch 8080;
+                }
             } else if (mem.startsWith(u8, trimmed_line, "\"root_path\"")) {
-                const value_part = mem.splitScalar(u8, trimmed_line, ':').rest;
-                const str_val = mem.trim(u8, value_part, " \"");
-                root_path_str = str_val; // This slice points into dummy_file_content
+                var parts = mem.splitScalar(u8, trimmed_line, ':');
+                _ = parts.next(); // Skip the key part
+                if (parts.next()) |value_part| {
+                    const str_val = mem.trim(u8, value_part, " \"");
+                    root_path_str = str_val; // This slice points into dummy_file_content
+                }
             }
         }
         // --- End Super Simple Dummy Parsing Logic ---
