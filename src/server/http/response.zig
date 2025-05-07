@@ -50,15 +50,14 @@ pub const StatusCode = enum(u16) {
     }
 };
 
-pub const Response = struct(comptime WriterType: type) {
+pub const Response = struct {
     allocator: mem.Allocator,
-    writer: WriterType,
     status: StatusCode,
     headers: std.StringHashMap([]const u8), // Header values are owned
     headers_sent: bool,
 
-    pub fn init(allocator: mem.Allocator, writer: WriterType) Response(WriterType) {
-        return Response(WriterType){
+    pub fn init(allocator: mem.Allocator, writer: anytype) Response {
+        return Response{
             .allocator = allocator,
             .writer = writer,
             .status = .Ok, // Default status
@@ -67,7 +66,7 @@ pub const Response = struct(comptime WriterType: type) {
         };
     }
 
-    pub fn deinit(self: *Response(WriterType)) void {
+    pub fn deinit(self: *Response) void {
         var it = self.headers.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.value_ptr.*);
@@ -76,12 +75,12 @@ pub const Response = struct(comptime WriterType: type) {
         self.* = undefined;
     }
 
-    pub fn setStatus(self: *Response(WriterType), status: StatusCode) void {
+    pub fn setStatus(self: *Response, status: StatusCode) void {
         self.status = status;
     }
 
     // Value will be duplicated
-    pub fn setHeader(self: *Response(WriterType), name: []const u8, value: []const u8) !void {
+    pub fn setHeader(self: *Response, name: []const u8, value: []const u8) !void {
         const owned_value = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(owned_value);
 
@@ -90,7 +89,7 @@ pub const Response = struct(comptime WriterType: type) {
         }
     }
 
-    fn sendHeaders(self: *Response(WriterType)) !void {
+    fn sendHeaders(self: *Response) !void {
         if (self.headers_sent) return;
 
         try self.writer.print("HTTP/1.1 {d} {s}\r\n", .{
@@ -100,13 +99,13 @@ pub const Response = struct(comptime WriterType: type) {
 
         var it = self.headers.iterator();
         while (it.next()) |entry| {
-            try self.writer.print("{s}: {s}\r\n", .{entry.key_ptr.*, entry.value_ptr.*});
+            try self.writer.print("{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
         try self.writer.writeAll("\r\n");
         self.headers_sent = true;
     }
 
-    pub fn send(self: *Response(WriterType), body: []const u8) !void {
+    pub fn send(self: *Response, body: []const u8) !void {
         if (!self.headers.contains("Content-Length")) {
             try self.setHeader("Content-Length", &std.fmt.allocPrint(self.allocator, "{d}", .{body.len}) catch @panic("allocPrint failed"));
             // The allocated string for Content-Length will be freed in deinit
@@ -116,7 +115,7 @@ pub const Response = struct(comptime WriterType: type) {
     }
 
     // For sending larger content, like files, without loading all into memory
-    pub fn sendStream(self: *Response(WriterType), comptime R: type, stream_reader: R, content_length: u64) !void {
+    pub fn sendStream(self: *Response, comptime R: type, stream_reader: R, content_length: u64) !void {
         if (!self.headers.contains("Content-Length")) {
             try self.setHeader("Content-Length", &std.fmt.allocPrint(self.allocator, "{d}", .{content_length}) catch @panic("allocPrint failed"));
         }
@@ -137,12 +136,11 @@ pub const Response = struct(comptime WriterType: type) {
     // Convenience for sending simple text/html error pages
     pub fn sendError(
         allocator: mem.Allocator, // Separate allocator for error page if response is already messed up
-        comptime ConcreteWriterType: type, // Make writer type explicit here too
-        writer: ConcreteWriterType,
+        writer: anytype,
         status: StatusCode,
         message: []const u8,
     ) !void {
-        var error_response = Response(ConcreteWriterType).init(allocator, writer);
+        var error_response = Response.init(allocator, writer);
         defer error_response.deinit();
         error_response.setStatus(status);
         try error_response.setHeader("Content-Type", "text/html; charset=utf-8");
