@@ -44,27 +44,33 @@ pub fn serveFile(
     cfg: *const config_mod.Config,
     req: *const request_mod.Request,
     resp: *response_mod.Response,
+    writer: anytype,
 ) !void {
     // 1. Construct the full file path
     // Basic path sanitization: disallow ".." to prevent traversal (very basic)
-    if (mem.indexOf(u8, req.path, "..")) |_| {
-        std.debug.print("Path traversal attempt: {s}\n", .{req.path});
-        try response_mod.Response.sendError(allocator, resp.writer, .Forbidden, "Access denied: Invalid path.");
+    if (mem.indexOf(u8, req.path[0..req.path_len], "..")) |_| {
+        std.debug.print("Path traversal attempt: {s}\n", .{req.path[0..req.path_len]});
+        try response_mod.Response.sendError(allocator, writer, .Forbidden, "Access denied: Invalid path.");
         return;
     }
 
     // Normalize requested path: ensure it starts with '/' and handle multiple slashes
     var path_buf = std.ArrayList(u8).init(allocator);
     defer path_buf.deinit();
-    if (!mem.startsWith(u8, req.path, "/")) {
+    if (!mem.startsWith(u8, req.path[0..req.path_len], "/")) {
         try path_buf.append('/');
     }
-    try path_buf.appendSlice(req.path);
-    const normalized_req_path = path_buf.toOwnedSlice(); // Now owned by path_buf
+    try path_buf.appendSlice(req.path[0..req.path_len]);
+
+    const normalized_req_path = try path_buf.toOwnedSlice();
     defer allocator.free(normalized_req_path);
 
+    // Now we can safely access normalized_req_path directly
     // If path is "/", serve "index.html"
-    const actual_req_path = if (mem.eql(u8, normalized_req_path, "/")) "/index.html" else normalized_req_path;
+    const actual_req_path = if (normalized_req_path.len == 1 and normalized_req_path[0] == '/')
+        "/index.html"
+    else
+        normalized_req_path;
 
     var full_path_list = std.ArrayList(u8).init(allocator);
     defer full_path_list.deinit();
@@ -78,10 +84,10 @@ pub fn serveFile(
     } else {
         try full_path_list.appendSlice(actual_req_path);
     }
-    const full_path = full_path_list.toOwnedSlice();
+    const full_path = try full_path_list.toOwnedSlice();
     defer allocator.free(full_path);
 
-    std.debug.print("Attempting to serve static file: {s} (from req path {s})\n", .{ full_path, req.path });
+    std.debug.print("Attempting to serve static file: {s} (from req path {s})\n", .{ full_path, req.path[0..req.path_len] });
 
     // Basic security: Check if the resolved path is still within the root.
     // This needs a much more robust implementation in a real server.
@@ -90,7 +96,7 @@ pub fn serveFile(
     // This is a placeholder for a real security check.
     if (!mem.startsWith(u8, full_path, cfg.root_path)) {
         std.debug.print("Security alert: Path {s} resolved outside root {s}\n", .{ full_path, cfg.root_path });
-        try response_mod.Response.sendError(allocator, resp.writer, .Forbidden, "Access Denied.");
+        try response_mod.Response.sendError(allocator, writer, .Forbidden, "Access Denied.");
         return;
     }
 
@@ -99,15 +105,15 @@ pub fn serveFile(
         std.debug.print("Failed to open file {s}: {any}\n", .{ full_path, err });
         switch (err) {
             error.FileNotFound => {
-                try response_mod.Response.sendError(allocator, resp.writer, .NotFound, "File not found.");
+                try response_mod.Response.sendError(allocator, writer, .NotFound, "File not found.");
                 return;
             },
             error.AccessDenied => {
-                try response_mod.Response.sendError(allocator, resp.writer, .Forbidden, "Access denied.");
+                try response_mod.Response.sendError(allocator, writer, .Forbidden, "Access denied.");
                 return;
             },
             else => {
-                try response_mod.Response.sendError(allocator, resp.writer, .InternalServerError, "Error accessing file.");
+                try response_mod.Response.sendError(allocator, writer, .InternalServerError, "Error accessing file.");
                 return;
             },
         }
@@ -117,14 +123,14 @@ pub fn serveFile(
     // 3. Get file stats (for content length and to check if it's a directory)
     const stat = file.stat() catch |err| {
         std.debug.print("Failed to stat file {s}: {any}\n", .{ full_path, err });
-        try response_mod.Response.sendError(allocator, resp.writer, .InternalServerError, "Error stating file.");
+        try response_mod.Response.sendError(allocator, writer, .InternalServerError, "Error stating file.");
         return;
     };
 
-    if (stat.kind == .Directory) {
+    if (stat.kind == .directory) {
         // For now, don't serve directories. Could implement directory listing later.
         std.debug.print("Attempt to access directory: {s}\n", .{full_path});
-        try response_mod.Response.sendError(allocator, resp.writer, .Forbidden, "Access to directories is forbidden.");
+        try response_mod.Response.sendError(allocator, writer, .Forbidden, "Access to directories is forbidden.");
         return;
     }
 
@@ -148,5 +154,5 @@ pub fn serveFile(
 
     // 5. Stream the file content
     std.debug.print("Streaming file {s} ({d} bytes) with type {s}\n", .{ full_path, stat.size, content_type });
-    try resp.sendStream(fs.File.Reader, file.reader(), stat.size);
+    try resp.sendStream(writer, fs.File.Reader, file.reader(), stat.size);
 }

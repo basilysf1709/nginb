@@ -15,7 +15,7 @@ pub const StatusCode = enum(u16) {
     NoContent = 204,
 
     MovedPermanently = 301,
-    Found = 302, // Temporary redirect
+    Found = 302,
 
     BadRequest = 400,
     Unauthorized = 401,
@@ -56,10 +56,9 @@ pub const Response = struct {
     headers: std.StringHashMap([]const u8), // Header values are owned
     headers_sent: bool,
 
-    pub fn init(allocator: mem.Allocator, writer: anytype) Response {
+    pub fn init(allocator: mem.Allocator) Response {
         return Response{
             .allocator = allocator,
-            .writer = writer,
             .status = .Ok, // Default status
             .headers = std.StringHashMap([]const u8).init(allocator),
             .headers_sent = false,
@@ -85,41 +84,44 @@ pub const Response = struct {
         errdefer self.allocator.free(owned_value);
 
         if (self.headers.fetchPut(name, owned_value) catch @panic("Failed to put header")) |old_entry| {
-            self.allocator.free(old_entry.value_ptr.*); // Free old value if replacing
+            self.allocator.free(old_entry.value); // Free old value if replacing
         }
     }
 
-    fn sendHeaders(self: *Response) !void {
+    fn sendHeaders(self: *Response, writer: anytype) !void {
         if (self.headers_sent) return;
 
-        try self.writer.print("HTTP/1.1 {d} {s}\r\n", .{
+        try writer.print("HTTP/1.1 {d} {s}\r\n", .{
             @intFromEnum(self.status),
             self.status.reasonPhrase(),
         });
 
         var it = self.headers.iterator();
         while (it.next()) |entry| {
-            try self.writer.print("{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+            try writer.print("{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
-        try self.writer.writeAll("\r\n");
+        try writer.writeAll("\r\n");
         self.headers_sent = true;
     }
 
-    pub fn send(self: *Response, body: []const u8) !void {
+    pub fn send(self: *Response, writer: anytype, body: []const u8) !void {
         if (!self.headers.contains("Content-Length")) {
-            try self.setHeader("Content-Length", &std.fmt.allocPrint(self.allocator, "{d}", .{body.len}) catch @panic("allocPrint failed"));
-            // The allocated string for Content-Length will be freed in deinit
+            const content_length_str = try std.fmt.allocPrint(self.allocator, "{d}", .{body.len});
+            defer self.allocator.free(content_length_str);
+            try self.setHeader("Content-Length", content_length_str);
         }
-        try self.sendHeaders();
-        try self.writer.writeAll(body);
+        try self.sendHeaders(writer);
+        try writer.writeAll(body);
     }
 
     // For sending larger content, like files, without loading all into memory
-    pub fn sendStream(self: *Response, comptime R: type, stream_reader: R, content_length: u64) !void {
+    pub fn sendStream(self: *Response, writer: anytype, comptime R: type, stream_reader: R, content_length: u64) !void {
         if (!self.headers.contains("Content-Length")) {
-            try self.setHeader("Content-Length", &std.fmt.allocPrint(self.allocator, "{d}", .{content_length}) catch @panic("allocPrint failed"));
+            const content_length_str = try std.fmt.allocPrint(self.allocator, "{d}", .{content_length});
+            defer self.allocator.free(content_length_str);
+            try self.setHeader("Content-Length", content_length_str);
         }
-        try self.sendHeaders();
+        try self.sendHeaders(writer);
 
         var buffer: [4096]u8 = undefined;
         var total_sent: u64 = 0;
@@ -128,19 +130,19 @@ pub const Response = struct {
             const bytes_read = try stream_reader.read(buffer[0..bytes_to_read]);
             if (bytes_read == 0) break; // EOF
 
-            try self.writer.writeAll(buffer[0..bytes_read]);
+            try writer.writeAll(buffer[0..bytes_read]);
             total_sent += bytes_read;
         }
     }
 
     // Convenience for sending simple text/html error pages
     pub fn sendError(
-        allocator: mem.Allocator, // Separate allocator for error page if response is already messed up
+        allocator: mem.Allocator,
         writer: anytype,
         status: StatusCode,
         message: []const u8,
     ) !void {
-        var error_response = Response.init(allocator, writer);
+        var error_response = Response.init(allocator);
         defer error_response.deinit();
         error_response.setStatus(status);
         try error_response.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -151,9 +153,9 @@ pub const Response = struct {
             \\<head><meta charset="UTF-8"><title>{d} {s}</title></head>
             \\<body><h1>{d} {s}</h1><p>{s}</p></body>
             \\</html>
-        , .{ @intFromEnum(status), status.reasonPhrase(), status.reasonPhrase(), message });
+        , .{ @intFromEnum(status), status.reasonPhrase(), @intFromEnum(status), status.reasonPhrase(), message });
         defer allocator.free(body);
 
-        try error_response.send(body);
+        try error_response.send(writer, body);
     }
 };

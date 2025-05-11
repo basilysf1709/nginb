@@ -1,40 +1,37 @@
 const std = @import("std");
-const net = std.net;
-const lb = @import("load_balancer.zig"); // Import the new module
-const server_config = @import("server/config.zig"); // New import
+const mem = std.mem;
+const config_mod = @import("./server/config.zig");
+const master_mod = @import("./server/master.zig");
+const logger = @import("./server/utils/logger.zig");
 
 pub fn main() !void {
+    // Initialize allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Example of using the imported config
-    var config = try server_config.Config.loadFromFile(allocator, "conf/server.conf");
-    defer config.deinit(allocator);
+    // Initialize logger (master process will do this before forking)
+    // Workers will inherit the logger setup.
+    // For file logging, ensure the path is correct and writable.
+    // const log_file = try std.fs.cwd().createFile("server.log", .{ .truncate = false }); // Example: append to server.log
+    // defer log_file.close();
+    // logger.initGlobalLogger(allocator, .DEBUG, log_file.writer());
+    // For now, simple stdout logging:
+    logger.initGlobalLogger(allocator, .DEBUG, null); // Log to stdout/stderr
+    defer logger.deinitGlobalLogger();
 
-    std.debug.print("Loaded config: workers = {d}, address = {s}, port = {d}\n", .{ config.worker_count, config.listen_address, config.listen_port });
+    logger.info("Application starting...", .{});
 
-    // --- Configuration (potentially from loaded config now) ---
-    // const listen_ip = "0.0.0.0"; // Could come from config.listen_address
-    // const listen_port: u16 = 8080; // Could come from config.listen_port
+    // Load configuration
+    const config = try config_mod.Config.loadFromFile(allocator, "conf/server.conf");
+    // defer config.deinit(allocator); // Deinit of config might be handled by master or if it's just data, not strictly needed here
 
-    // Define backend servers
-    // In a real app, this might come from a config file or service discovery
-    const backend_servers = [_]lb.Backend{
-        lb.Backend.init("127.0.0.1", 8081),
-        lb.Backend.init("127.0.0.1", 8082),
-        lb.Backend.init("127.0.0.1", 8083),
-    };
-    // --- End Configuration ---
+    // Initialize Master
+    var master = try master_mod.Master.init(allocator, config);
+    defer master.deinit(); // Master deinit will handle cleanup
 
-    // Parse the listen address
-    const listen_address = try net.Address.parseIp(config.listen_address, config.listen_port);
+    // Start Master (which now forks and manages workers)
+    try master.start();
 
-    // Start the load balancer
-    std.debug.print("Starting server on {s}:{d}...\n", .{ config.listen_address, config.listen_port });
-    try lb.start(listen_address, &backend_servers);
-
-    // This part is unreachable in the current loop structure of lb.start,
-    // but good practice if start could return normally.
-    std.debug.print("Server finished.\n", .{});
+    logger.info("Application shutting down.", .{});
 }

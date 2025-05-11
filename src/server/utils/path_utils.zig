@@ -62,13 +62,9 @@ pub fn join(allocator: mem.Allocator, base: []const u8, rest: []const u8) ![]con
 /// Basic security check for path traversal.
 /// This is a VERY basic dummy and not a complete security solution.
 /// It just checks for ".." components.
-pub fn isSafe(p: []const u8) bool {
-    if (mem.indexOf(u8, p, "..")) |_| {
-        // A real check would normalize the path and ensure it doesn't go above a root.
-        // For this dummy, any ".." is considered potentially unsafe.
-        return false;
-    }
-    return true;
+pub fn isSafe(path: []const u8) bool {
+    // Simple implementation: check if path contains ".."
+    return (mem.indexOf(u8, path, "..") == null);
 }
 
 test "normalize path" {

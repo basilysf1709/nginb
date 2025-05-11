@@ -1,8 +1,16 @@
 const std = @import("std");
 const io = std.io;
 const fs = std.fs;
-const time = std.time;
+// const time = std.time; // We'll use ctime for timestamp string
 const mem = std.mem;
+
+// Import C's time.h
+const ctime = @cImport({
+    @cInclude("time.h");
+    // Define _POSIX_C_SOURCE or similar if your time.h needs it for asctime_r/localtime_r
+    // For basic asctime/localtime, it might not be needed.
+    // e.g. @cDefine("_POSIX_C_SOURCE", "199309L");
+});
 
 pub const LogLevel = enum {
     DEBUG,
@@ -26,11 +34,11 @@ pub const LogLevel = enum {
 pub const Logger = struct {
     allocator: mem.Allocator,
     min_level: LogLevel,
-    writer: ?std.io.Writer,
+    writer: ?std.fs.File.Writer,
 
     // For simplicity, this dummy logger won't manage file opening/closing itself.
     // It expects a ready writer.
-    pub fn init(allocator: mem.Allocator, min_level: LogLevel, writer: ?std.io.Writer) Logger {
+    pub fn init(allocator: mem.Allocator, min_level: LogLevel, writer: ?std.fs.File.Writer) Logger {
         return Logger{
             .allocator = allocator,
             .min_level = min_level,
@@ -51,23 +59,43 @@ pub const Logger = struct {
         }
 
         if (self.writer) |w| {
-            // Basic timestamp (not fully featured)
-            const now = time.timestamp();
-            const datetime = time.epochToCalendar(now);
+            // Get current time using C functions
+            var now_c: ctime.time_t = undefined;
+            _ = ctime.time(&now_c); // Get current epoch time
 
-            // In a real logger, you'd handle writer errors
-            w.print("[{04}-{:02}-{:02} {:02}:{:02}:{:02}] [{s}] ", .{
-                datetime.year,
-                datetime.month,
-                datetime.day,
-                datetime.hour,
-                datetime.minute,
-                datetime.second,
-                level.toString(),
-            }) catch return; // Ignore error for dummy
+            // Convert to local time structure
+            // Using localtime_r for thread-safety if available and preferred.
+            // Otherwise, localtime is simpler but not thread-safe without external locking.
+            // For this example, let's try with localtime first.
+            // If localtime_r is needed:
+            // var timeinfo_s: ctime.struct_tm = undefined;
+            // const timeinfo = ctime.localtime_r(&now_c, &timeinfo_s);
+            const timeinfo_ptr = ctime.localtime(&now_c); // Returns a pointer to a static internal buffer
 
-            w.print(format, args) catch return; // Ignore error for dummy
-            w.print("\n", .{}) catch return; // Ignore error for dummy
+            if (timeinfo_ptr == null) {
+                // Fallback or error logging if localtime fails
+                w.print("[UNKNOWN_TIME] [{s}] ", .{level.toString()}) catch return;
+            } else {
+                // Format time using asctime or strftime
+                // asctime produces a fixed format string: "Www Mmm dd hh:mm:ss yyyy\n"
+                // We need to be careful with the newline from asctime.
+                // strftime offers more control.
+                // For simplicity with asctime, and removing its newline:
+                var time_str_buffer: [26]u8 = undefined; // asctime format is 24 chars + null + potential newline
+
+                // Using strftime for custom format "[YYYY-MM-DD HH:MM:SS]"
+                const bytes_formatted = ctime.strftime(&time_str_buffer, time_str_buffer.len, "[%Y-%m-%d %H:%M:%S]", timeinfo_ptr);
+
+                if (bytes_formatted == 0) {
+                    // strftime failed or buffer too small
+                    w.print("[FORMAT_TIME_ERR] [{s}] ", .{level.toString()}) catch return;
+                } else {
+                    w.print("{s} [{s}] ", .{ time_str_buffer[0..bytes_formatted], level.toString() }) catch return;
+                }
+            }
+
+            w.print(format, args) catch return;
+            w.print("\n", .{}) catch return;
         } else {
             // Fallback to std.debug.print if no writer
             std.debug.print("[{s}] ", .{level.toString()});
@@ -103,7 +131,7 @@ pub const Logger = struct {
 var global_logger: Logger = undefined;
 var global_logger_initialized: bool = false;
 
-pub fn initGlobalLogger(allocator: mem.Allocator, min_level: LogLevel, writer: ?std.io.Writer) void {
+pub fn initGlobalLogger(allocator: mem.Allocator, min_level: LogLevel, writer: ?std.fs.File.Writer) void {
     global_logger = Logger.init(allocator, min_level, writer);
     global_logger_initialized = true;
 }
